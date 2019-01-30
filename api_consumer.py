@@ -6,6 +6,17 @@ import os
 import sys
 
 
+# SolarEdge
+#url = "https://monitoringapi.solaredge.com/site/604465/energy"
+# querystring = {"startDate":"2018-01-01","endDate":"2018-02-01","timeUnit":"QUARTER_OF_AN_HOUR","api_key":"ZYKHN7DMQW7HGI8MRGHT0IKN5IVS28XC"}
+# payload = ""
+# headers = {'cache-control': 'no-cache'}
+# response = requests.request("GET", url, data=payload, headers=headers, params=querystring)
+
+
+
+
+# Mobile Alerts Meteo
 url_sensor = "https://www.data199.com/api/pv1/device/lastmeasurement"
 
 payload_sensor = "deviceids=0844F59172CD%2C0B250836A75B&phoneid=789807439177"
@@ -54,51 +65,86 @@ def readConfig(config):
     try:
         conf_mqtt = configSectionMap(config, "MQTT")
     except:
-        print("Could not open config file, or could not find config section in file")
+        print("Could not open config file, or could not find the MQTT config section in the file")
         config_full_path = os.getcwd() + "/" + args.f
         print("Tried to open the config file: ", config_full_path)
         raise ValueError
     try:
         conf_db = configSectionMap(config, "DB")
     except:
-        print("Could not open config file, or could not find config section in file")
+        print("Could not find the DB config section")
         config_full_path = os.getcwd() + "/" + args.f
         print("Tried to open the config file: ", config_full_path)
         raise ValueError
     try:
         conf_alert_sensor = configSectionMap(config, "ALERT_SENSOR")
     except:
-        print("Could not open config file, or could not find config section in file")
+        print("Could not find the ALERT_SENSOR config section")
         config_full_path = os.getcwd() + "/" + args.f
         print("Tried to open the config file: ", config_full_path)
         raise ValueError
-    return (conf_mqtt, conf_db, conf_alert_sensor)
+    try:
+        conf_solar_edge = configSectionMap(config, "SOLAR_EDGE")
+    except:
+        print("Could not find the SOLAR_EDGE config section")
+        config_full_path = os.getcwd() + "/" + args.f
+        print("Tried to open the config file: ", config_full_path)
+        raise ValueError
+    return (conf_mqtt, conf_db, conf_alert_sensor, conf_solar_edge)
 
+
+def api_get_meteoSensor(conf):
+    headers = {'cache-control': 'no-cache','content-type': 'application/x-www-form-urlencoded'}
+    payload = 'phoneid='+conf['phoneid']+"&deviceids="+conf['deviceids']+"&undefined="
+    url = conf['url']
+    try:
+        response = requests.request("POST", url, data=payload, headers=headers)
+    except:
+        print("Could not connect to METEO Cloud Server. Aborting")
+        return None
+    if response.status_code == 400:
+        print ("problem contacting the cloud")
+        return None
+    return response.json()
+
+
+def api_get_solarEdge(conf):
+    headers = {'cache-control': 'no-cache'}
+    payload = {"startDate":"2018-01-01","endDate":"2018-02-01","timeUnit":"QUARTER_OF_AN_HOUR","api_key":"ZYKHN7DMQW7HGI8MRGHT0IKN5IVS28XC"}
+    url = conf['url']
+    try:
+        response = requests.request("GET", url, data="", headers=headers, params=payload)
+    except:
+        print("Could not connect to the SolarEdge Cloud Server. Aborting")
+        return None
+    if response.status_code == 400:
+        print ("problem contacting the cloud")
+        return None
+    return response.json()
 
 
 print("Starting")
 def main(cf):
 
     try:
-        (conf_mqtt, conf_db, conf_sensor)=readConfig(cf)
+        (conf_mqtt, conf_db, conf_sensor, conf_solaredge)=readConfig(cf)
     except ValueError:
         exit(1)
-    #    response = requests.request("POST", url_sensor, data=payload_sensor, headers=headers_sensor).json()
-    headers = {'cache-control': 'no-cache','content-type': 'application/x-www-form-urlencoded'}
-    payload = 'phoneid='+conf_sensor['phoneid']+"&deviceids="+conf_sensor['deviceids']+"&undefined="
-    url = conf_sensor['url']
-#    payload = "phoneid=789807439177&deviceids=081323E85744%2C0B250836A75B&undefined="
 
-    try:
-        response = requests.request("POST", url, data=payload, headers=headers)
-    except:
-        print("Could not connect to METEO Cloud Server. Aborting")
+    solaredge_json = api_get_solarEdge(conf_solaredge)
+    if solaredge_json == None:
         exit(1)
-    if response.status_code == 400:
-        print ("problem contacting the cloud")
+    for quarter in solaredge_json['energy']['values']:
+        if quarter['value'] == None:
+            value = 0
+        else:
+            value = int(quarter['value'])
+        print (quarter['date'], " ", value)
+
+    meteo_json = api_get_meteoSensor(conf_sensor)
+    if meteo_json == None:
         exit(1)
-    return_json = response.json()
-    for device in return_json['devices']:
+    for device in meteo_json['devices']:
         measurement = device['measurement']
         id = measurement['idx']
         m_dict = {}
