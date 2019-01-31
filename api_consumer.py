@@ -4,38 +4,15 @@ import configparser
 import argparse
 import os
 import sys
+from datetime import datetime, timedelta
 
-
-# SolarEdge
-#url = "https://monitoringapi.solaredge.com/site/604465/energy"
-# querystring = {"startDate":"2018-01-01","endDate":"2018-02-01","timeUnit":"QUARTER_OF_AN_HOUR","api_key":"ZYKHN7DMQW7HGI8MRGHT0IKN5IVS28XC"}
-# payload = ""
-# headers = {'cache-control': 'no-cache'}
-# response = requests.request("GET", url, data=payload, headers=headers, params=querystring)
-
-
-
-
-# Mobile Alerts Meteo
-url_sensor = "https://www.data199.com/api/pv1/device/lastmeasurement"
-
-payload_sensor = "deviceids=0844F59172CD%2C0B250836A75B&phoneid=789807439177"
-headers_sensor = {
-    'content-type': "application/x-www-form-urlencoded",
-    'cache-control': "no-cache",
-    #    'postman-token': "3c48dde2-14ca-413f-6574-6222fa5eb304"
-}
-headers_sink = {
-    'content-type': "application/json",
-    'cache-control': "no-cache",
-}
-es_index='meteosensor'
+es_index = 'meteosensor'
 last_rain = {}
 last_wind = {}
 id = 0
-last_rain['id']=0
-last_rain['amount']=0
-last_wind['id']=0
+last_rain['id'] = 0
+last_rain['amount'] = 0
+last_wind['id'] = 0
 
 
 
@@ -52,13 +29,15 @@ def configSectionMap(config, section):
             dict1[option] = None
     return dict1
 
+
 def parseTheArgs() -> object:
-    parser = argparse.ArgumentParser(description='Reads a value from the BME280 sensor and writes it to MQTT and DB')
+    parser = argparse.ArgumentParser(description='Reads values from multiple API and writes it to MQTT and DB')
     parser.add_argument('-f', help='path and filename of the config file, default is ./config.rc',
                         default='config.rc')
+    parser.add_argument('-m', help="get meteo data")
+    parser.add_argument('-s', help="get solar edge data")
 
-    args = parser.parse_args()
-    return args
+    return parser.parse_args()
 
 
 def readConfig(config):
@@ -109,11 +88,16 @@ def api_get_meteoSensor(conf):
 
 
 def api_get_solarEdge(conf):
+    now = datetime.today() - timedelta(days=180)
+    now_h1 = now - timedelta(hours=12)
     headers = {'cache-control': 'no-cache'}
-    payload = {"startDate":"2018-01-01","endDate":"2018-02-01","timeUnit":"QUARTER_OF_AN_HOUR","api_key":"ZYKHN7DMQW7HGI8MRGHT0IKN5IVS28XC"}
+    payload = {"timeUnit": "QUARTER_OF_AN_HOUR", "meters": "Production","api_key": "ZYKHN7DMQW7HGI8MRGHT0IKN5IVS28XC"}
+    payload['endTime'] = now.strftime('%Y-%m-%d %H:%M:%S')
+    payload['startTime'] = now_h1.strftime('%Y-%m-%d %H:%M:%S')
     url = conf['url']
+
     try:
-        response = requests.request("GET", url, data="", headers=headers, params=payload)
+        response = requests.request("GET", url, data='', headers=headers, params=payload)
     except:
         print("Could not connect to the SolarEdge Cloud Server. Aborting")
         return None
@@ -125,7 +109,6 @@ def api_get_solarEdge(conf):
 
 print("Starting")
 def main(cf):
-
     try:
         (conf_mqtt, conf_db, conf_sensor, conf_solaredge)=readConfig(cf)
     except ValueError:
@@ -134,11 +117,11 @@ def main(cf):
     solaredge_json = api_get_solarEdge(conf_solaredge)
     if solaredge_json == None:
         exit(1)
-    for quarter in solaredge_json['energy']['values']:
-        if quarter['value'] == None:
-            value = 0
-        else:
+    for quarter in solaredge_json['energyDetails']['meters'][0]['values']:
+        if 'value' in quarter:
             value = int(quarter['value'])
+        else:
+            value = 0
         print (quarter['date'], " ", value)
 
     meteo_json = api_get_meteoSensor(conf_sensor)
@@ -148,8 +131,8 @@ def main(cf):
         measurement = device['measurement']
         id = measurement['idx']
         m_dict = {}
-        m_dict['@timestamp'] = datetime.datetime.fromtimestamp(measurement['ts']).isoformat()
-        m_dict['ts_lastseen'] = datetime.datetime.fromtimestamp(measurement['c']).isoformat()
+        m_dict['@timestamp'] = datetime.fromtimestamp(measurement['ts']).isoformat()
+        m_dict['ts_lastseen'] = datetime.fromtimestamp(measurement['c']).isoformat()
         if 'r' in measurement:
             # rain sensor
             if last_rain['id'] == id:
