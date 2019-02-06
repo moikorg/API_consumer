@@ -5,15 +5,41 @@ import argparse
 import os
 import sys
 from datetime import datetime, timedelta
+from peewee import *
 
-es_index = 'meteosensor'
-last_rain = {}
-last_wind = {}
-id = 0
-last_rain['id'] = 0
-last_rain['amount'] = 0
-last_wind['id'] = 0
 
+db = SqliteDatabase('./app.db', pragmas={'journal_mode': 'wal'})
+
+
+class BaseModel(Model):
+    """A base model that will use our Sqlite database."""
+    class Meta:
+        database = db
+
+
+class SolarEdge(BaseModel):
+    ts = DateTimeField()
+    ts_epoch = TimestampField(primary_key=True)
+    energy = SmallIntegerField()
+
+
+class MeteoRain(BaseModel):
+    ts = DateTimeField()
+    ts_epoch = TimestampField(primary_key=True)
+    rain_total = FloatField()
+    rain_new = FloatField()
+    temperature = FloatField()
+
+
+class MeteoWind(BaseModel):
+    ts = DateTimeField()
+    ts_epoch = TimestampField(primary_key=True)
+    speed = FloatField()
+    gust = FloatField()
+    direction = CharField()
+
+
+wind_direction = ['N', 'NNO', 'NO', 'ONO', 'O', 'OSO', 'SO', 'SSO', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
 
 
 def configSectionMap(config, section):
@@ -82,18 +108,20 @@ def api_get_meteoSensor(conf):
         print("Could not connect to METEO Cloud Server. Aborting")
         return None
     if response.status_code == 400:
-        print ("problem contacting the cloud")
+        print("problem contacting the cloud")
         return None
     return response.json()
 
 
 def api_get_solarEdge(conf):
-    now = datetime.today() - timedelta(days=180)
-    now_h1 = now - timedelta(hours=12)
+    now = datetime.today()
+    now_h1 = now - timedelta(days=1, hours=1)
     headers = {'cache-control': 'no-cache'}
-    payload = {"timeUnit": "QUARTER_OF_AN_HOUR", "meters": "Production","api_key": "ZYKHN7DMQW7HGI8MRGHT0IKN5IVS28XC"}
+    payload = {"timeUnit": "QUARTER_OF_AN_HOUR", "meters": "Production", "api_key": "ZYKHN7DMQW7HGI8MRGHT0IKN5IVS28XC"}
     payload['endTime'] = now.strftime('%Y-%m-%d %H:%M:%S')
     payload['startTime'] = now_h1.strftime('%Y-%m-%d %H:%M:%S')
+#    payload['startTime'] = '2019-02-01 00:00:00'
+#    payload['endTime'] = '2019-02-05 10:00:00'
     url = conf['url']
 
     try:
@@ -102,9 +130,12 @@ def api_get_solarEdge(conf):
         print("Could not connect to the SolarEdge Cloud Server. Aborting")
         return None
     if response.status_code == 400:
-        print ("problem contacting the cloud")
+        print("problem contacting the cloud")
         return None
+    if response.status_code == 403:
+        print("Error in the datetime arguments")
     return response.json()
+
 
 
 print("Starting")
@@ -115,55 +146,42 @@ def main(cf):
         exit(1)
 
     solaredge_json = api_get_solarEdge(conf_solaredge)
-    if solaredge_json == None:
+    if solaredge_json is None:
         exit(1)
+
     for quarter in solaredge_json['energyDetails']['meters'][0]['values']:
         if 'value' in quarter:
             value = int(quarter['value'])
         else:
             value = 0
         print (quarter['date'], " ", value)
-
+        datetime_object = datetime.strptime(quarter['date'], '%Y-%m-%d %H:%M:%S')
+        ep = datetime_object.timestamp()
+        ret = SolarEdge.replace(ts=quarter['date'], ts_epoch=ep, energy=value).execute()
     meteo_json = api_get_meteoSensor(conf_sensor)
-    if meteo_json == None:
+    if meteo_json is None:
         exit(1)
     for device in meteo_json['devices']:
         measurement = device['measurement']
         id = measurement['idx']
-        m_dict = {}
-        m_dict['@timestamp'] = datetime.fromtimestamp(measurement['ts']).isoformat()
-        m_dict['ts_lastseen'] = datetime.fromtimestamp(measurement['c']).isoformat()
+        ts = datetime.fromtimestamp(measurement['ts']).isoformat()
         if 'r' in measurement:
             # rain sensor
-            if last_rain['id'] == id:
-                #print("rain: same ID, nothing to do")
-                #print(m_dict)
-                continue
-            type = device['deviceid']
-            m_dict['total_rain'] = measurement['r']
-            m_dict['temperature'] = measurement['t1']
-            m_dict['sensor_type'] = 'rain'
-            last_rain['id'] = id
-            m_dict['additional_rain'] = m_dict['total_rain'] - last_rain['amount']
-            last_rain['amount'] = m_dict['total_rain']
+            last_item = MeteoRain.select().order_by(MeteoRain.ts_epoch.desc()).get()
+            if int(last_item.ts_epoch.strftime('%s')) != measurement['ts']:
+                delta = measurement['r'] - last_item.rain_total
+                ret = MeteoRain.replace(ts=ts, ts_epoch=measurement['ts'], rain_total=measurement['r'], rain_new=delta,
+                                    temperature= measurement['t1']).execute()
+            print(ret)
         elif 'ws' in measurement:
             # wind sensor
-            if last_wind['id'] == id:
-                #print("wind: same ID, nothing to do")
-                #print(m_dict)
-                continue
-            type = device['deviceid']
-            m_dict['windspeed'] = measurement['ws']
-            m_dict['windgust'] = measurement['wg']
-            m_dict['winddir'] = measurement['wd']
-            last_wind['id'] = id
-            m_dict['sensor_type'] = 'wind'
-        else :
-            type = 'unknown'
+            ret = MeteoWind.replace(ts=ts, ts_epoch=measurement['ts'], speed=measurement['ws'], gust=measurement['wg'],
+                                    direction=wind_direction[measurement['wd']]).execute()
+            print(ret)
 
 
-        print('data pushed to DB and MQTT ')
-        print(m_dict)
+    print('data pushed to DB and MQTT ')
+        #print(m_dict)
     #print("finished.... sleeping")
 
 
@@ -174,5 +192,9 @@ if __name__ == '__main__':
     config = configparser.ConfigParser()
     config.read(args.f)
 
+    db.connect()
+#    db.create_tables([SolarEdge, MeteoRain, MeteoWind])
+
     rtcode = main(config)
+    db.close()
     sys.exit(rtcode)
