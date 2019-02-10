@@ -167,7 +167,7 @@ def main(conf_mqtt, conf_sensor, conf_solaredge):
                 last_item = MeteoRain.select().order_by(MeteoRain.ts_epoch.desc()).get()
                 if int(last_item.ts_epoch.strftime('%s')) != measurement['ts']:
                     delta = measurement['r'] - last_item.rain_total
-            ret = MeteoRain.replace(ts=ts, ts_epoch=measurement['ts'], rain_total=measurement['r'], rain_new=delta,
+                    ret = MeteoRain.replace(ts=ts, ts_epoch=measurement['ts'], rain_total=measurement['r'], rain_new=delta,
                                     temperature= measurement['t1']).execute()
             print('Rain ', ts)
         elif 'ws' in measurement:
