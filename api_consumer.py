@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from peewee import *
 
 
-db = SqliteDatabase('./app.db', pragmas={'journal_mode': 'wal'})
+db = MySQLDatabase(None)    # will be initialized later
 
 
 class BaseModel(Model):
@@ -42,12 +42,12 @@ class MeteoWind(BaseModel):
 wind_direction = ['N', 'NNO', 'NO', 'ONO', 'O', 'OSO', 'SO', 'SSO', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
 
 
-def configSectionMap(config, section):
+def config_section_map(conf, section):
     dict1 = {}
-    options = config.options(section)
+    options = conf.options(section)
     for option in options:
         try:
-            dict1[option] = config.get(section, option)
+            dict1[option] = conf.get(section, option)
             if dict1[option] == -1:
                 print("skip: %s" % option)
         except:
@@ -56,7 +56,7 @@ def configSectionMap(config, section):
     return dict1
 
 
-def parseTheArgs() -> object:
+def parse_args() -> object:
     parser = argparse.ArgumentParser(description='Reads values from multiple API and writes it to MQTT and DB')
     parser.add_argument('-f', help='path and filename of the config file, default is ./config.rc',
                         default='config.rc')
@@ -66,36 +66,36 @@ def parseTheArgs() -> object:
     return parser.parse_args()
 
 
-def readConfig(config):
+def read_config(conf, config_file):
     try:
-        conf_mqtt = configSectionMap(config, "MQTT")
+        c_mqtt = config_section_map(conf, "MQTT")
     except:
-        print("Could not open config file, or could not find the MQTT config section in the file")
-        config_full_path = os.getcwd() + "/" + args.f
-        print("Tried to open the config file: ", config_full_path)
+        print("Could not open conf file, or could not find the MQTT conf section in the file")
+        config_full_path = os.getcwd() + "/" + config_file
+        print("Tried to open the conf file: ", config_full_path)
         raise ValueError
     try:
-        conf_db = configSectionMap(config, "DB")
+        c_db = config_section_map(conf, "DB")
     except:
-        print("Could not find the DB config section")
-        config_full_path = os.getcwd() + "/" + args.f
-        print("Tried to open the config file: ", config_full_path)
+        print("Could not find the DB conf section")
+        config_full_path = os.getcwd() + "/" + config_file
+        print("Tried to open the conf file: ", config_full_path)
         raise ValueError
     try:
-        conf_alert_sensor = configSectionMap(config, "ALERT_SENSOR")
+        c_alert_sensor = config_section_map(conf, "ALERT_SENSOR")
     except:
-        print("Could not find the ALERT_SENSOR config section")
-        config_full_path = os.getcwd() + "/" + args.f
-        print("Tried to open the config file: ", config_full_path)
+        print("Could not find the ALERT_SENSOR conf section")
+        config_full_path = os.getcwd() + "/" + config_file
+        print("Tried to open the conf file: ", config_full_path)
         raise ValueError
     try:
-        conf_solar_edge = configSectionMap(config, "SOLAR_EDGE")
+        c_solar_edge = config_section_map(conf, "SOLAR_EDGE")
     except:
-        print("Could not find the SOLAR_EDGE config section")
-        config_full_path = os.getcwd() + "/" + args.f
-        print("Tried to open the config file: ", config_full_path)
+        print("Could not find the SOLAR_EDGE conf section")
+        config_full_path = os.getcwd() + "/" + config_file
+        print("Tried to open the conf file: ", config_full_path)
         raise ValueError
-    return (conf_mqtt, conf_db, conf_alert_sensor, conf_solar_edge)
+    return (c_mqtt, c_db, c_alert_sensor, c_solar_edge)
 
 
 def api_get_meteoSensor(conf):
@@ -113,15 +113,14 @@ def api_get_meteoSensor(conf):
     return response.json()
 
 
-def api_get_solarEdge(conf):
+def api_get_solaredge(conf):
     now = datetime.today()
-    now_h1 = now - timedelta(days=1, hours=1)
+    now_h1 = now - timedelta(days=0, hours=2)
     headers = {'cache-control': 'no-cache'}
-    payload = {"timeUnit": "QUARTER_OF_AN_HOUR", "meters": "Production", "api_key": "ZYKHN7DMQW7HGI8MRGHT0IKN5IVS28XC"}
-    payload['endTime'] = now.strftime('%Y-%m-%d %H:%M:%S')
-    payload['startTime'] = now_h1.strftime('%Y-%m-%d %H:%M:%S')
+    payload = {"timeUnit": "QUARTER_OF_AN_HOUR", "meters": "Production", "api_key": "ZYKHN7DMQW7HGI8MRGHT0IKN5IVS28XC",
+               'endTime': now.strftime('%Y-%m-%d %H:%M:%S'), 'startTime': now_h1.strftime('%Y-%m-%d %H:%M:%S')}
 #    payload['startTime'] = '2019-02-01 00:00:00'
-#    payload['endTime'] = '2019-02-05 10:00:00'
+#    payload['endTime'] = '2019-03-01 10:00:00'
     url = conf['url']
 
     try:
@@ -138,14 +137,9 @@ def api_get_solarEdge(conf):
 
 
 
-print("Starting")
-def main(cf):
-    try:
-        (conf_mqtt, conf_db, conf_sensor, conf_solaredge)=readConfig(cf)
-    except ValueError:
-        exit(1)
+def main(conf_mqtt, conf_sensor, conf_solaredge):
 
-    solaredge_json = api_get_solarEdge(conf_solaredge)
+    solaredge_json = api_get_solaredge(conf_solaredge)
     if solaredge_json is None:
         exit(1)
 
@@ -154,7 +148,7 @@ def main(cf):
             value = int(quarter['value'])
         else:
             value = 0
-        print (quarter['date'], " ", value)
+        print(quarter['date'], " ", value)
         datetime_object = datetime.strptime(quarter['date'], '%Y-%m-%d %H:%M:%S')
         ep = datetime_object.timestamp()
         ret = SolarEdge.replace(ts=quarter['date'], ts_epoch=ep, energy=value).execute()
@@ -167,34 +161,38 @@ def main(cf):
         ts = datetime.fromtimestamp(measurement['ts']).isoformat()
         if 'r' in measurement:
             # rain sensor
-            last_item = MeteoRain.select().order_by(MeteoRain.ts_epoch.desc()).get()
-            if int(last_item.ts_epoch.strftime('%s')) != measurement['ts']:
-                delta = measurement['r'] - last_item.rain_total
-                ret = MeteoRain.replace(ts=ts, ts_epoch=measurement['ts'], rain_total=measurement['r'], rain_new=delta,
+            query = MeteoRain.select()
+            delta = 0
+            if query.exists():
+                last_item = MeteoRain.select().order_by(MeteoRain.ts_epoch.desc()).get()
+                if int(last_item.ts_epoch.strftime('%s')) != measurement['ts']:
+                    delta = measurement['r'] - last_item.rain_total
+            ret = MeteoRain.replace(ts=ts, ts_epoch=measurement['ts'], rain_total=measurement['r'], rain_new=delta,
                                     temperature= measurement['t1']).execute()
-            print(ret)
+            print('Rain ', ts)
         elif 'ws' in measurement:
             # wind sensor
             ret = MeteoWind.replace(ts=ts, ts_epoch=measurement['ts'], speed=measurement['ws'], gust=measurement['wg'],
                                     direction=wind_direction[measurement['wd']]).execute()
-            print(ret)
-
-
+            print('Wind ', ts)
     print('data pushed to DB and MQTT ')
-        #print(m_dict)
-    #print("finished.... sleeping")
+    return 0
 
 
 # this is the standard boilerplate that calls the main() function
 if __name__ == '__main__':
-    # sys.exit(main(sys.argv)) # used to give a better look to exists
-    args = parseTheArgs()
+    args = parse_args()
     config = configparser.ConfigParser()
     config.read(args.f)
-
-    db.connect()
+    try:
+        (conf_mqtt, conf_db, conf_sensor, conf_solaredge) = read_config(config, args.f)
+    except ValueError:
+        exit(1)
+    db.init(conf_db['db'], host=conf_db['host'], user=conf_db['username'], password=conf_db['password'],
+            port=int(conf_db['port']))
+    db.connect(conf_db)
 #    db.create_tables([SolarEdge, MeteoRain, MeteoWind])
 
-    rtcode = main(config)
+    rtcode = main(conf_mqtt, conf_sensor, conf_solaredge)
     db.close()
     sys.exit(rtcode)
