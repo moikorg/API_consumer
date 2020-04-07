@@ -143,6 +143,7 @@ def main(conf_mqtt, conf_sensor, conf_solaredge):
     if solaredge_json is None:
         exit(1)
 
+    print("Date from solar edge:")
     for quarter in solaredge_json['energyDetails']['meters'][0]['values']:
         if 'value' in quarter:
             value = int(quarter['value'])
@@ -152,10 +153,16 @@ def main(conf_mqtt, conf_sensor, conf_solaredge):
         datetime_object = datetime.strptime(quarter['date'], '%Y-%m-%d %H:%M:%S')
         ep = datetime_object.timestamp()
         ret = SolarEdge.replace(ts=quarter['date'], ts_epoch=ep, energy=value).execute()
+    
     meteo_json = api_get_meteoSensor(conf_sensor)
     if meteo_json is None:
         exit(1)
+
+    print("\nData from meteo sensor:")
     for device in meteo_json['devices']:
+        print(device)
+        if 'measurement' not in device:
+            continue
         measurement = device['measurement']
         id = measurement['idx']
         ts = datetime.fromtimestamp(measurement['ts']).isoformat()
@@ -175,7 +182,7 @@ def main(conf_mqtt, conf_sensor, conf_solaredge):
             ret = MeteoWind.replace(ts=ts, ts_epoch=measurement['ts'], speed=measurement['ws'], gust=measurement['wg'],
                                     direction=wind_direction[measurement['wd']]).execute()
             print('Wind ', ts)
-    print('data pushed to DB and MQTT ')
+    print('\nData pushed to DB and MQTT ')
     return 0
 
 
