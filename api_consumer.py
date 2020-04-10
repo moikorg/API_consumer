@@ -7,33 +7,36 @@ import sys
 from datetime import datetime, timedelta
 from peewee import *
 
-
-db = MySQLDatabase(None)    # will be initialized later
+db = MySQLDatabase(None)  # will be initialized later
 
 
 class BaseModel(Model):
     """A base model that will use our Sqlite database."""
+
     class Meta:
         database = db
 
 
 class SolarEdge(BaseModel):
     ts = DateTimeField()
-    ts_epoch = TimestampField(primary_key=True)
+    ts_epoch = TimestampField()
     energy = SmallIntegerField()
+    id = IntegerField(primary_key=True)
 
 
 class MeteoRain(BaseModel):
+    id = IntegerField(primary_key=True)
     ts = DateTimeField()
-    ts_epoch = TimestampField(primary_key=True)
+    ts_epoch = TimestampField()
     rain_total = FloatField()
     rain_new = FloatField()
     temperature = FloatField()
 
 
 class MeteoWind(BaseModel):
+    id = IntegerField(primary_key=True)
     ts = DateTimeField()
-    ts_epoch = TimestampField(primary_key=True)
+    ts_epoch = TimestampField()
     speed = FloatField()
     gust = FloatField()
     direction = CharField()
@@ -99,8 +102,8 @@ def read_config(conf, config_file):
 
 
 def api_get_meteoSensor(conf):
-    headers = {'cache-control': 'no-cache','content-type': 'application/x-www-form-urlencoded'}
-    payload = 'phoneid='+conf['phoneid']+"&deviceids="+conf['deviceids']+"&undefined="
+    headers = {'cache-control': 'no-cache', 'content-type': 'application/x-www-form-urlencoded'}
+    payload = 'phoneid=' + conf['phoneid'] + "&deviceids=" + conf['deviceids'] + "&undefined="
     url = conf['url']
     try:
         response = requests.request("POST", url, data=payload, headers=headers)
@@ -119,8 +122,8 @@ def api_get_solaredge(conf):
     headers = {'cache-control': 'no-cache'}
     payload = {"timeUnit": "QUARTER_OF_AN_HOUR", "meters": "Production", "api_key": "ZYKHN7DMQW7HGI8MRGHT0IKN5IVS28XC",
                'endTime': now.strftime('%Y-%m-%d %H:%M:%S'), 'startTime': now_h1.strftime('%Y-%m-%d %H:%M:%S')}
-#    payload['startTime'] = '2019-02-01 00:00:00'
-#    payload['endTime'] = '2019-03-01 10:00:00'
+    #    payload['startTime'] = '2019-02-01 00:00:00'
+    #    payload['endTime'] = '2019-03-01 10:00:00'
     url = conf['url']
 
     try:
@@ -136,9 +139,7 @@ def api_get_solaredge(conf):
     return response.json()
 
 
-
 def main(conf_mqtt, conf_sensor, conf_solaredge):
-
     solaredge_json = api_get_solaredge(conf_solaredge)
     if solaredge_json is None:
         exit(1)
@@ -152,8 +153,9 @@ def main(conf_mqtt, conf_sensor, conf_solaredge):
         print(quarter['date'], " ", value)
         datetime_object = datetime.strptime(quarter['date'], '%Y-%m-%d %H:%M:%S')
         ep = datetime_object.timestamp()
-        ret = SolarEdge.replace(ts=quarter['date'], ts_epoch=ep, energy=value).execute()
-    
+#        ret = solarelement.select().where(SolarEdge.ts_epoch == ep).execute()
+        ret = SolarEdge.update(energy=value).where(SolarEdge.ts_epoch == ep).execute()
+
     meteo_json = api_get_meteoSensor(conf_sensor)
     if meteo_json is None:
         exit(1)
@@ -174,8 +176,9 @@ def main(conf_mqtt, conf_sensor, conf_solaredge):
                 last_item = MeteoRain.select().order_by(MeteoRain.ts_epoch.desc()).get()
                 if int(last_item.ts_epoch.strftime('%s')) != measurement['ts']:
                     delta = measurement['r'] - last_item.rain_total
-                    ret = MeteoRain.replace(ts=ts, ts_epoch=measurement['ts'], rain_total=measurement['r'], rain_new=delta,
-                                    temperature= measurement['t1']).execute()
+                    ret = MeteoRain.replace(ts=ts, ts_epoch=measurement['ts'], rain_total=measurement['r'],
+                                            rain_new=delta,
+                                            temperature=measurement['t1']).execute()
             print('Rain ', ts)
         elif 'ws' in measurement:
             # wind sensor
@@ -198,7 +201,7 @@ if __name__ == '__main__':
     db.init(conf_db['db'], host=conf_db['host'], user=conf_db['username'], password=conf_db['password'],
             port=int(conf_db['port']))
     db.connect(conf_db)
-#    db.create_tables([SolarEdge, MeteoRain, MeteoWind])
+    #    db.create_tables([SolarEdge, MeteoRain, MeteoWind])
 
     rtcode = main(conf_mqtt, conf_sensor, conf_solaredge)
     db.close()
