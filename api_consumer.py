@@ -122,8 +122,8 @@ def api_get_solaredge(conf):
     headers = {'cache-control': 'no-cache'}
     payload = {"timeUnit": "QUARTER_OF_AN_HOUR", "meters": "Production", "api_key": "ZYKHN7DMQW7HGI8MRGHT0IKN5IVS28XC",
                'endTime': now.strftime('%Y-%m-%d %H:%M:%S'), 'startTime': now_h1.strftime('%Y-%m-%d %H:%M:%S')}
-    #    payload['startTime'] = '2019-02-01 00:00:00'
-    #    payload['endTime'] = '2019-03-01 10:00:00'
+#    payload['startTime'] = '2020-04-01 00:00:00'
+#    payload['endTime'] = '2020-05-01 10:00:00'
     url = conf['url']
 
     try:
@@ -152,9 +152,16 @@ def main(conf_mqtt, conf_sensor, conf_solaredge):
             value = 0
         print(quarter['date'], " ", value)
         datetime_object = datetime.strptime(quarter['date'], '%Y-%m-%d %H:%M:%S')
-        ep = datetime_object.timestamp()
-#        ret = solarelement.select().where(SolarEdge.ts_epoch == ep).execute()
-        ret = SolarEdge.update(energy=value).where(SolarEdge.ts_epoch == ep).execute()
+        ep = int(datetime_object.timestamp())
+
+        found_element_sel = SolarEdge.select().where(SolarEdge.ts_epoch == ep)
+        try:
+            found_element = found_element_sel.get()
+        except:
+            SolarEdge.insert(energy=value, ts=datetime_object, ts_epoch=ep).execute()
+        else:
+            ret = found_element.update(energy=value).where(SolarEdge.ts_epoch == ep).execute()
+
 
     meteo_json = api_get_meteoSensor(conf_sensor)
     if meteo_json is None:
@@ -176,13 +183,13 @@ def main(conf_mqtt, conf_sensor, conf_solaredge):
                 last_item = MeteoRain.select().order_by(MeteoRain.ts_epoch.desc()).get()
                 if int(last_item.ts_epoch.strftime('%s')) != measurement['ts']:
                     delta = measurement['r'] - last_item.rain_total
-                    ret = MeteoRain.replace(ts=ts, ts_epoch=measurement['ts'], rain_total=measurement['r'],
+                    MeteoRain.replace(ts=ts, ts_epoch=measurement['ts'], rain_total=measurement['r'],
                                             rain_new=delta,
                                             temperature=measurement['t1']).execute()
             print('Rain ', ts)
         elif 'ws' in measurement:
             # wind sensor
-            ret = MeteoWind.replace(ts=ts, ts_epoch=measurement['ts'], speed=measurement['ws'], gust=measurement['wg'],
+            MeteoWind.replace(ts=ts, ts_epoch=measurement['ts'], speed=measurement['ws'], gust=measurement['wg'],
                                     direction=wind_direction[measurement['wd']]).execute()
             print('Wind ', ts)
     print('\nData pushed to DB and MQTT ')
