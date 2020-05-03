@@ -175,23 +175,34 @@ def main(conf_mqtt, conf_sensor, conf_solaredge):
         measurement = device['measurement']
         id = measurement['idx']
         ts = datetime.fromtimestamp(measurement['ts']).isoformat()
+        ep = int(measurement['ts'])
         if 'r' in measurement:
             # rain sensor
             query = MeteoRain.select()
             delta = 0
             if query.exists():
                 last_item = MeteoRain.select().order_by(MeteoRain.ts_epoch.desc()).get()
-                if int(last_item.ts_epoch.strftime('%s')) != measurement['ts']:
+                if int(last_item.ts_epoch.strftime('%s')) != ep:
                     delta = measurement['r'] - last_item.rain_total
-                    MeteoRain.replace(ts=ts, ts_epoch=measurement['ts'], rain_total=measurement['r'],
+                    MeteoRain.replace(ts=ts, ts_epoch=ep, rain_total=measurement['r'],
                                             rain_new=delta,
                                             temperature=measurement['t1']).execute()
             print('Rain ', ts)
         elif 'ws' in measurement:
             # wind sensor
-            MeteoWind.replace(ts=ts, ts_epoch=measurement['ts'], speed=measurement['ws'], gust=measurement['wg'],
+            found_element_rain_sel = MeteoWind.select().where(MeteoWind.ts_epoch == ep)
+            try:
+                found_element_rain = found_element_rain_sel.get()
+            except:
+                MeteoWind.insert(ts=ts, ts_epoch=ep, speed=measurement['ws'], gust=measurement['wg'],
                                     direction=wind_direction[measurement['wd']]).execute()
-            print('Wind ', ts)
+            else:
+#                found_element_rain.update()
+                print("Noting to do, element exists already. Entry with epoch time "+str(ep)+" already exists")
+
+            # MeteoWind.replace(ts=ts, ts_epoch=ep, speed=measurement['ws'], gust=measurement['wg'],
+            #                         direction=wind_direction[measurement['wd']]).execute()
+            print('Wind ', ts, ' epoch: ', ep)
     print('\nData pushed to DB and MQTT ')
     return 0
 
