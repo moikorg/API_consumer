@@ -1,4 +1,5 @@
 peewee
 requests
 pymysql
+paho-mqtt
 
