@@ -6,6 +6,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 from peewee import *
+import paho.mqtt.client as mqtt
 
 db = MySQLDatabase(None)  # will be initialized later
 
@@ -187,6 +188,7 @@ def main(conf_mqtt, conf_sensor, conf_solaredge):
                     MeteoRain.replace(ts=ts, ts_epoch=ep, rain_total=measurement['r'],
                                             rain_new=delta,
                                             temperature=measurement['t1']).execute()
+                    writeRainMQTT(conf_mqtt, ep, measurement['r'], delta, measurement['t1'])
             print('Rain ', ts)
         elif 'ws' in measurement:
             # wind sensor
@@ -196,15 +198,69 @@ def main(conf_mqtt, conf_sensor, conf_solaredge):
             except:
                 MeteoWind.insert(ts=ts, ts_epoch=ep, speed=measurement['ws'], gust=measurement['wg'],
                                     direction=wind_direction[measurement['wd']]).execute()
+                writeWindMQTT(conf_mqtt, ep, measurement['ws'], measurement['wg'], wind_direction[measurement['wd']])
             else:
-#                found_element_rain.update()
                 print("Noting to do, element exists already. Entry with epoch time "+str(ep)+" already exists")
 
-            # MeteoWind.replace(ts=ts, ts_epoch=ep, speed=measurement['ws'], gust=measurement['wg'],
-            #                         direction=wind_direction[measurement['wd']]).execute()
             print('Wind ', ts, ' epoch: ', ep)
     print('\nData pushed to DB and MQTT ')
     return 0
+
+
+def connectMQTT(conf):
+    broker = conf['host']
+    client = mqtt.Client()
+    client.on_connect = on_connect
+    client.on_publish = on_publish
+    client.on_disconnect = on_disconnect
+    client.username_pw_set(username=conf['username'],
+                           password=conf['password'])
+    try:
+        client.connect(broker, 1883, 60)
+    except:
+        print("ERROR: Can not connect to MQTT broker")
+        return -1
+    return client
+
+
+def writeRainMQTT(conf, ep, rainTot, rainDelta, temperature):
+    print("Write MQTT")
+    client = connectMQTT(conf)
+    if client == -1:
+        return -1
+
+    mqtt_json = "{\"ts\":\"" + str(ep) + "\"," + \
+                "\"totalRain\":" + str(rainTot) + "," + \
+                "\"deltaRain\":" + str(rainDelta) + "," + \
+                "\"temperature\":" + str(temperature) + "}"
+    client.publish("sensor/meteo/3", mqtt_json)  # publish
+    client.disconnect()
+
+
+def writeWindMQTT(conf, ep, speed, gust, direction):
+    print("Write MQTT")
+    client = connectMQTT(conf)
+    if client == -1:
+        return -1
+
+    mqtt_json = "{\"ts\":\"" + str(ep) + "\"," + \
+                "\"speed\":" + str(speed) + "," + \
+                "\"gust\":" + str(gust) + "," + \
+                "\"direction\":" + str(direction) + "}"
+    client.publish("sensor/meteo/4", mqtt_json)  # publish
+    client.disconnect()
+
+
+def on_connect(client, userdata, flags, rc):
+    print("Connected with result code "+str(rc))
+
+
+def on_publish(client, userdata, result):
+    print("Data published")
+    pass
+
+def on_disconnect(client, userdata, rc):
+    print("disconnecting reason  " + str(rc))
 
 
 # this is the standard boilerplate that calls the main() function
