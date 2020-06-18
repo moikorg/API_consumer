@@ -246,7 +246,7 @@ def writeWindMQTT(conf, ep, speed, gust, direction):
     mqtt_json = "{\"ts\":\"" + str(ep) + "\"," + \
                 "\"speed\":" + str(speed) + "," + \
                 "\"gust\":" + str(gust) + "," + \
-                "\"direction\":" + str(direction) + "}"
+                "\"direction\":\"" + str(direction) + "\"}"
     client.publish("sensor/meteo/4", mqtt_json)  # publish
     client.disconnect()
 
